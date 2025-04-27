@@ -19,27 +19,27 @@
                 display: flex;
             }
 
-            #container {
+            article {
                 display: flex;
                 align-items: start;
                 gap: .5rem;
                 margin: auto;
             }
 
-            #container canvas {
+            article canvas {
                 touch-action: none;
             }
 
-            #container .tp-rotv {
+            article .tp-rotv {
                 width: 20rem;
             }
         </style>
     </head>
 
     <body>
-        <div id="container">
+        <article>
             <canvas></canvas>
-        </div>
+        </article>
 
         <script>
             const CANVAS_WIDTH = 512;
@@ -51,6 +51,35 @@
                     min: 1,
                     max: 8,
                     step: 2,
+                },
+                quantity: {
+                    view: 'list',
+                    options: [
+                        {
+                            text: 'velocity-x',
+                            value: 0,
+                        },
+                        {
+                            text: 'velocity-y',
+                            value: 1,
+                        },
+                        {
+                            text: 'divergence',
+                            value: 2,
+                        },
+                        {
+                            text: 'pressure',
+                            value: 3,
+                        },
+                        {
+                            text: 'vorticity',
+                            value: 4,
+                        },
+                        {
+                            text: 'dye',
+                            value: 5,
+                        },
+                    ],
                 },
                 pixelated: null,
                 dt: {
@@ -88,10 +117,14 @@
                     max: 40,
                     step: 5,
                 },
+                state: {
+                    title: 'Stop'
+                },
             };
 
             const settings = {
                 resolution: 8,
+                quantity: 5,
                 pixelated: false,
                 dt: 1,
                 dyeRadius: 4,
@@ -100,6 +133,7 @@
                 vorticity: .25,
                 diffusionIterations: 20,
                 pressureIterations: 20,
+                state: true,
             };
         </script>
 
@@ -146,21 +180,47 @@
 
             const controls = new Map();
             const pane = new Pane({
-                title: 'Settings',
-                container: document.getElementById('container'),
+                title: 'settings',
+                container: document.querySelector('article'),
             });
 
             Object.entries(settings).forEach(setting => {
                 const [key, value] = setting;
 
+                let control;
                 const options = controlOptions[key];
-                const control = pane.addBinding(settings, key, options);
+
+
+                if (key === 'state') {
+                    control = pane.addButton(options);
+                }
+                else {
+                    control = pane.addBinding(settings, key, options);
+                }
 
                 controls.set(key, control);
             });
 
+            controls.get('quantity').on('change', (event) => {
+                q = quantityMap[event.value];
+            });
+
             controls.get('pixelated').on('change', (event) => {
                 canvas.style.imageRendering = event.value ? 'pixelated' : 'auto';
+            });
+
+            controls.get('state').on('click', (event) => {
+                settings.state = !settings.state;
+
+                event.target.title = settings.state ? 'stop' : 'play';
+
+                if (settings.state) {
+                    rafID = requestAnimationFrame(loop);
+
+                    return;
+                }
+
+                cancelAnimationFrame(rafID);
             });
 
             let isPointerPressed = false;
@@ -168,7 +228,7 @@
             canvas.addEventListener('pointerdown', (event) => (isPointerPressed = true));
             canvas.addEventListener('pointerup', () => (isPointerPressed = false));
             canvas.addEventListener('pointermove', (event) => {
-                if (!isPointerPressed) {
+                if (!isPointerPressed || !settings.state) {
                     return;
                 }
 
@@ -215,12 +275,23 @@
             let u1 = new Float32Array(bufferLength);
             let v0 = new Float32Array(bufferLength);
             let v1 = new Float32Array(bufferLength);
+            let div = new Float32Array(bufferLength);
             let p0 = new Float32Array(bufferLength);
             let p1 = new Float32Array(bufferLength);     
-            let div = new Float32Array(bufferLength);
             let vor = new Float32Array(bufferLength);
             let dye0 = new Float32Array(bufferLength);
             let dye1 = new Float32Array(bufferLength);
+
+            const quantityMap = {
+                0: u0,
+                1: v0,
+                2: p0,
+                3: div,
+                4: vor,
+                5: dye0,
+            };
+
+            let q = quantityMap[settings.quantity];
         </script>
 
         <script>
@@ -581,14 +652,16 @@
                 context.putImageData(imageData, 0, 0);
             }
 
+            let rafID;
+
             function loop() {
                 simulate();
-                render(dye0);
+                render(q);
 
-                requestAnimationFrame(loop);
+                rafID = requestAnimationFrame(loop);
             }
 
-            requestAnimationFrame(loop);
+            rafID = requestAnimationFrame(loop);
         </script>
     </body>
 </html>

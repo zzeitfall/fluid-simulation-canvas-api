@@ -38,21 +38,20 @@
 
     <body>
         <article>
-            <canvas></canvas>
+            <canvas width="512" height="512"></canvas>
         </article>
 
         <script>
-            const CANVAS_WIDTH = 512;
-            const CANVAS_HEIGHT = 512;
-
             const TWO_PI = 2 * Math.PI;
             const SQ_ROOT_TWO_PI = Math.sqrt(TWO_PI);
+        </script>
 
+        <script>
             const controlOptions = {
-                resolution: {
+                downscale: {
                     disabled: true,
                     min: 1,
-                    max: 8,
+                    max: 16,
                     step: 2,
                 },
                 pixelated: null,
@@ -113,7 +112,7 @@
                 viscosity: {
                     min: .001,
                     max: .1,
-                    step: .01
+                    step: .001
                 },
                 vorticity: {
                     min: .005,
@@ -136,16 +135,16 @@
             };
 
             const settings = {
-                resolution: 8,
+                downscale: 8,
                 pixelated: false,
                 quantity: 5,
                 dt: 1,
-                velocityForce: 8,
+                velocityForce: 4,
                 dyeIntensity: .1,
                 dyeRadius: 4,
                 dyeFade: .99,
-                viscosity: .001,
-                vorticity: .25,
+                viscosity: .005,
+                vorticity: .3,
                 diffusionIterations: 20,
                 pressureIterations: 20,
                 state: true,
@@ -155,10 +154,10 @@
         <script>
             const canvas = document.querySelector('canvas');
 
-            canvas.width = Math.floor(CANVAS_WIDTH / settings.resolution);
-            canvas.height = Math.floor(CANVAS_HEIGHT / settings.resolution);
-            canvas.style.width = `${CANVAS_WIDTH}px`;
-            canvas.style.height = `${CANVAS_HEIGHT}px`;
+            canvas.style.width = `${canvas.width}px`;
+            canvas.style.height = `${canvas.height}px`;
+            canvas.width = Math.floor(canvas.width / settings.downscale);
+            canvas.height = Math.floor(canvas.height / settings.downscale);
 
             const context = canvas.getContext('2d', { alpha: false });
 
@@ -261,8 +260,8 @@
 
                 const { offsetX, offsetY, movementX, movementY } = event;
 
-                const pointerX = Math.floor(offsetX / settings.resolution);
-                const pointerY = Math.floor(offsetY / settings.resolution);
+                const pointerX = Math.floor(offsetX / settings.downscale);
+                const pointerY = Math.floor(offsetY / settings.downscale);
                 const movementLength = Math.max(1e-4, Math.hypot(movementX, movementY));
 
                 const { dt, velocityForce, dyeIntensity, dyeRadius } = settings;
@@ -282,7 +281,7 @@
                         const velocityX = movementX / movementLength;
                         const velocityY = movementY / movementLength;
 
-                        const gaussian = dt * gaussian2D(x, y, dyeRadius);
+                        const gaussian = dt * calculateGaussian2D(x, y, dyeRadius);
                         const dyeGaussian = dyeIntensity * gaussian;
                         const velocityGaussian = velocityForce * gaussian;
 
@@ -297,6 +296,7 @@
         <script>
             let bufferLength = canvas.width * canvas.height;
 
+            let q;
             let u0 = new Float32Array(bufferLength);
             let u1 = new Float32Array(bufferLength);
             let v0 = new Float32Array(bufferLength);
@@ -317,7 +317,7 @@
                 5: dye0,
             };
 
-            let q = quantityMap[settings.quantity];
+            q = quantityMap[settings.quantity];
         </script>
 
         <script>
@@ -351,7 +351,7 @@
                 }
             }
 
-            function diverge(u, v, div) {
+            function calculateDivergence(u, v, div) {
                 for (let y = 1; y < canvas.height - 1; y++) {
                     for (let x = 1; x < canvas.width - 1; x++) {
                         const Ci = IX(x, y);
@@ -413,7 +413,7 @@
                 }
             }
 
-            function vorticity(u, v, vor) {
+            function calculateVorticity(u, v, vor) {
                 for (let y = 1; y < canvas.height - 1; y++) {
                     for (let x = 1; x < canvas.width - 1; x++) {
                         const Ci = IX(x, y);
@@ -432,7 +432,7 @@
                 }
             }
 
-            function vorticityConfinement(u, v, vor) {
+            function applyVorticity(u, v, vor) {
                 for (let y = 1; y < canvas.height - 1; y++) {
                     for (let x = 1; x < canvas.width - 1; x++) {
                         const Ci = IX(x, y);
@@ -461,7 +461,7 @@
                 }
             }
 
-            function velocityBoundary(u, v) {
+            function applyVelocityBC(u, v) {
                 for (let y = 0; y < canvas.height; y++) {
                     const L0i = IX(0, y);
                     const L1i = IX(1, y);
@@ -535,7 +535,7 @@
                 v[BR0i] = (vBRLi + vBRTi) / 2;
             }
 
-            function neumannBoundary(q) {
+            function applyNeumannBC(q) {
                 for (let y = 0; y < canvas.height; y++) {
                     const L0i = IX(0, y);
                     const L1i = IX(1, y);
@@ -557,7 +557,7 @@
                 }
             }
 
-            function gaussian2D(x, y, s) {
+            function calculateGaussian2D(x, y, s) {
                 const x2 = x * x;
                 const y2 = y * y;
                 const s2 = s * s;
@@ -586,8 +586,7 @@
                     v0 = v1;
                     v1 = temp;
 
-                    // Apply boundary conditions
-                    velocityBoundary(u0, v0);
+                    applyVelocityBC(u0, v0); // Apply boundary conditions
                 }
 
                 // Advect velocity
@@ -601,18 +600,15 @@
                 temp = v0;
                 v0 = v1;
                 v1 = temp;
-
-                // Apply boundary conditions
-                velocityBoundary(u0, v0);
+                
+                applyVelocityBC(u0, v0); // Apply boundary conditions
 
                 // START: Make fluid incompressible
-                // Calculate divergence of velocity field
-                diverge(u0, v0, div);
-                neumannBoundary(div);
+                calculateDivergence(u0, v0, div);
+                applyNeumannBC(div); // Apply boundary conditions
 
                 // START: Solve poisson-pressure equation
-                // Set initial guess to 0
-                p0.fill(0);
+                p0.fill(0); // Set initial guess to 0
 
                 for (let i = 0; i < settings.pressureIterations; i++) {
                     poisson(p0, p1, div, -1, -4);
@@ -621,24 +617,20 @@
                     p0 = p1;
                     p1 = temp;
 
-                    neumannBoundary(p0);
+                    applyNeumannBC(p0);
                 }
                 // END: Solve poisson-pressure equation
 
                 subtractPressure(u0, v0, p0);
 
-                // Apply boundary conditions
-                velocityBoundary(u0, v0);
+                applyVelocityBC(u0, v0); // Apply boundary conditions
                 // END: Make fluid incompressible
 
-                // Calculate vorticity
-                vorticity(u0, v0, vor);
-                neumannBoundary(vor);
-                // Apply vorticity
-                vorticityConfinement(u0, v0, vor);
-
-                // Apply boundary conditions
-                velocityBoundary(u0, v0);
+                calculateVorticity(u0, v0, vor);
+                applyNeumannBC(vor); // Apply boundary conditions
+                applyVorticity(u0, v0, vor);
+                
+                applyVelocityBC(u0, v0); // Apply boundary conditions
 
                 // Advect dye through the fluid
                 advect(u0, v0, dye0, dye1);
@@ -647,7 +639,7 @@
                 dye0 = dye1;
                 dye1 = temp;
 
-                neumannBoundary(dye0);
+                applyNeumannBC(dye0); // Apply boundary conditions
 
                 // Diffuse dye
                 // for (let i = 0; i < settings.diffustionIterations; i++) {
@@ -661,6 +653,7 @@
                 //     dye1 = temp;
                 // }
 
+                // Clear the dye
                 for (let i = 0; i < dye0.length; i++) {
                     dye0[i] *= settings.dyeFade;
                 }

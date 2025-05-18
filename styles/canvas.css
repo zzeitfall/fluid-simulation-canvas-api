@@ -1,0 +1,7 @@
+canvas {
+    width: 512px;
+    height: 512px;
+    margin: auto;
+    image-rendering: pixelated;
+    touch-action: none;
+}

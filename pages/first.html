@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0">
+        <link rel="stylesheet" type="text/css" href="../styles/reset.css">
+        <link rel="stylesheet" type="text/css" href="../styles/nav.css">
+        <link rel="stylesheet" type="text/css" href="../styles/canvas.css">
+        <style>
+            article {
+                display: flex;
+                align-items: start;
+                gap: .5rem;
+                margin: auto;
+            }
+
+            article canvas {
+                touch-action: none;
+            }
+
+            article .tp-rotv {
+                width: 20rem;
+            }
+        </style>
+    </head>
+
+    <body>
+        <nav>
+            <a href="../index.html">Home</a>
+            <a href="first.html">Attempt #1</a>
+            <a href="second.html">Attempt #2</a>
+        </nav>
+
+        <article>
+            <canvas width="512" height="512"></canvas>
+        </article>
+
+        <script>
+            const TWO_PI = 2 * Math.PI;
+            const SQ_ROOT_TWO_PI = Math.sqrt(TWO_PI);
+        </script>
+
+        <script>
+            const controlOptions = {
+                downscale: {
+                    disabled: true,
+                    min: 1,
+                    max: 16,
+                    step: 2,
+                },
+                pixelated: null,
+                quantity: {
+                    view: 'list',
+                    options: [
+                        {
+                            text: 'velocity-x',
+                            value: 0,
+                        },
+                        {
+                            text: 'velocity-y',
+                            value: 1,
+                        },
+                        {
+                            text: 'divergence',
+                            value: 2,
+                        },
+                        {
+                            text: 'pressure',
+                            value: 3,
+                        },
+                        {
+                            text: 'vorticity',
+                            value: 4,
+                        },
+                        {
+                            text: 'dye',
+                            value: 5,
+                        },
+                    ],
+                },
+                dt: {
+                    min: .1,
+                    max: 2,
+                    step: .1,
+                },
+                velocityForce: {
+                    min: 2,
+                    max: 32,
+                    step: 2,
+                },
+                dyeIntensity: {
+                    min: .5,
+                    max: 4,
+                    step: .5,
+                },
+                dyeRadius: {
+                    min: 2,
+                    max: 16,
+                    step: 2,
+                },
+                dyeFade: {
+                    min: .9,
+                    max: 1,
+                    step: .001,
+                },
+                viscosity: {
+                    min: .001,
+                    max: .1,
+                    step: .001
+                },
+                vorticity: {
+                    min: .005,
+                    max: .5,
+                    step: .001,
+                },
+                diffusionIterations: {
+                    min: 5,
+                    max: 40,
+                    step: 5,
+                },
+                pressureIterations: {
+                    min: 5,
+                    max: 40,
+                    step: 5,
+                },
+                state: {
+                    title: 'Stop'
+                },
+            };
+
+            const settings = {
+                downscale: 8,
+                pixelated: true,
+                quantity: 5,
+                dt: 1.2,
+                velocityForce: 16,
+                dyeIntensity: 1.5,
+                dyeRadius: 4,
+                dyeFade: .99,
+                viscosity: .005,
+                vorticity: .3,
+                diffusionIterations: 20,
+                pressureIterations: 20,
+                state: true,
+            };
+        </script>
+
+        <script>
+            const canvas = document.querySelector('canvas');
+
+            canvas.style.width = `${canvas.width}px`;
+            canvas.style.height = `${canvas.height}px`;
+            canvas.width = Math.floor(canvas.width / settings.downscale);
+            canvas.height = Math.floor(canvas.height / settings.downscale);
+
+            const context = canvas.getContext('2d', { alpha: false });
+
+            context.imageSmoothingEnabled = true;
+            context.imageSmoothingQuality = 'high';
+
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        </script>
+
+        <script>
+            function IX(x, y) {
+                return x + y * canvas.width;
+            }
+
+            function int(value) {
+                return value | 0;
+            }
+
+            function fract(value) {
+                return value % 1;
+            }
+
+            function clamp(value, min, max) {
+                return Math.max(min, Math.min(value, max));
+            }
+
+            function lerp(a, b, t) {
+                return (1 - t) * a + t * b;
+            }
+
+            function isInterior(x, y, offset = 1) {
+                return x >= offset
+                    && y >= offset
+                    && x < canvas.width - offset
+                    && y < canvas.height - offset;
+            }
+
+            function isExterior(x, y, offset = 1) {
+                return !isInterior(x, y, offset);;
+            }
+        </script>
+
+        <script type="module">
+            import { Pane } from 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js';
+
+            const controls = new Map();
+            const pane = new Pane({
+                title: 'settings',
+                container: document.querySelector('article'),
+            });
+
+            Object.entries(settings).forEach(setting => {
+                const [key, value] = setting;
+
+                let control;
+                const options = controlOptions[key];
+
+
+                if (key === 'state') {
+                    control = pane.addButton(options);
+                }
+                else {
+                    control = pane.addBinding(settings, key, options);
+                }
+
+                controls.set(key, control);
+            });
+
+            controls.get('quantity').on('change', (event) => {
+                q = quantityMap[event.value];
+            });
+
+            controls.get('pixelated').on('change', (event) => {
+                canvas.style.imageRendering = event.value ? 'pixelated' : 'auto';
+            });
+
+            controls.get('state').on('click', (event) => {
+                settings.state = !settings.state;
+
+                event.target.title = settings.state ? 'stop' : 'play';
+
+                if (settings.state) {
+                    rafID = requestAnimationFrame(loop);
+
+                    return;
+                }
+
+                cancelAnimationFrame(rafID);
+            });
+
+            let isPointerPressed = false;
+
+            canvas.addEventListener('pointerdown', (event) => (isPointerPressed = true));
+            canvas.addEventListener('pointerup', () => (isPointerPressed = false));
+            canvas.addEventListener('pointerout', () => (isPointerPressed = false));
+            canvas.addEventListener('pointermove', (event) => {
+                if (!isPointerPressed || !settings.state) {
+                    return;
+                }
+
+                const { offsetX, offsetY, movementX, movementY } = event;
+
+                const pointerX = Math.floor(offsetX / settings.downscale);
+                const pointerY = Math.floor(offsetY / settings.downscale);
+                const movementLength = Math.max(1e-4, Math.hypot(movementX, movementY));
+
+                const { dt, velocityForce, dyeIntensity, dyeRadius } = settings;
+                const normalizedDyeRadius = dyeRadius * Math.SQRT1_2;
+
+                for (let y = -dyeRadius; y <= dyeRadius; y++) {
+                    for (let x = -dyeRadius; x <= dyeRadius; x++) {
+                        const distance = Math.hypot(x, y);
+                        const dyeX = pointerX + x;
+                        const dyeY = pointerY + y;
+
+                        if (isExterior(dyeX, dyeY) || distance > dyeRadius) {
+                            continue;
+                        }
+
+                        const i = IX(dyeX, dyeY);
+
+                        const velocityX = movementX / movementLength;
+                        const velocityY = movementY / movementLength;
+
+                        const gaussian = dt * calculateGaussian2D(x, y, normalizedDyeRadius);
+                        const dyeGaussian = dyeIntensity * gaussian;
+                        const velocityGaussian = velocityForce * gaussian;
+
+                        dye0[i] += dyeGaussian * movementLength;
+                        u0[i] += velocityGaussian * velocityX;
+                        v0[i] += velocityGaussian * velocityY;
+                    }
+                }
+            }, { passive: true });
+        </script>
+
+        <script>
+            let bufferLength = canvas.width * canvas.height;
+
+            let q;
+            let u0 = new Float32Array(bufferLength);
+            let u1 = new Float32Array(bufferLength);
+            let v0 = new Float32Array(bufferLength);
+            let v1 = new Float32Array(bufferLength);
+            let div = new Float32Array(bufferLength);
+            let p0 = new Float32Array(bufferLength);
+            let p1 = new Float32Array(bufferLength);     
+            let vor = new Float32Array(bufferLength);
+            let dye0 = new Float32Array(bufferLength);
+            let dye1 = new Float32Array(bufferLength);
+
+            const quantityMap = {
+                0: u0,
+                1: v0,
+                2: p0,
+                3: div,
+                4: vor,
+                5: dye0,
+            };
+
+            q = quantityMap[settings.quantity];
+        </script>
+
+        <script>
+            function advect(u, v, q0, q1) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const i = IX(x, y);
+
+                        const tx = clamp(x - settings.dt * u[i], 1, canvas.width - 2);
+                        const ty = clamp(y - settings.dt * v[i], 1, canvas.height - 2);
+                        const itx = int(tx);
+                        const ity = int(ty);
+                        const ftx = fract(tx);
+                        const fty = fract(ty);
+
+                        const L = itx;
+                        const R = L + 1;
+                        const T = ity;
+                        const B = T + 1;
+
+                        const TL = q0[IX(L, T)];
+                        const TR = q0[IX(R, T)];
+                        const BL = q0[IX(L, B)];
+                        const BR = q0[IX(R, B)];
+
+                        const lerpT = lerp(TL, TR, ftx);
+                        const lerpB = lerp(BL, BR, ftx);
+
+                        q1[i] = lerp(lerpT, lerpB, fty);
+                    }
+                }
+            }
+
+            function calculateDivergence(u, v, div) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const Ci = IX(x, y);
+                        const Li = IX(x - 1, y);
+                        const Ri = IX(x + 1, y);
+                        const Ti = IX(x, y - 1);
+                        const Bi = IX(x, y + 1);
+
+                        const L = u[Li];
+                        const R = u[Ri];
+                        const T = v[Ti];
+                        const B = v[Bi];
+
+                        div[Ci] = (R - L + B - T) / 2;
+                    }
+                }
+            }
+
+            function poisson(x0, x1, b, al, bt) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const Ci = IX(x, y);
+                        const Li = IX(x - 1, y);
+                        const Ri = IX(x + 1, y);
+                        const Ti = IX(x, y - 1);
+                        const Bi = IX(x, y + 1);
+
+                        const C = b[Ci];
+                        const L = x0[Li];
+                        const R = x0[Ri];
+                        const T = x0[Ti];
+                        const B = x0[Bi];
+
+                        // Stams approach
+                        x1[Ci] = (C + al * (L + R + T + B)) / bt;
+                        // GPU Gems (NVidia) approach
+                        // x1[Ci] = (L + R + T + B + al * C) / bt;
+                    }
+                }
+            }
+
+            function subtractPressure(u, v, p) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const Ci = IX(x, y);
+                        const Li = IX(x - 1, y);
+                        const Ri = IX(x + 1, y);
+                        const Ti = IX(x, y - 1);
+                        const Bi = IX(x, y + 1);
+
+                        const L = p[Li];
+                        const R = p[Ri];
+                        const T = p[Ti];
+                        const B = p[Bi];
+
+                        u[Ci] -= (R - L) / 2;
+                        v[Ci] -= (B - T) / 2;
+                    }
+                }
+            }
+
+            function calculateVorticity(u, v, vor) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const Ci = IX(x, y);
+                        const Li = IX(x - 1, y);
+                        const Ri = IX(x + 1, y);
+                        const Ti = IX(x, y - 1);
+                        const Bi = IX(x, y + 1);
+
+                        const L = v[Li];
+                        const R = v[Ri];
+                        const T = u[Ti];
+                        const B = u[Bi];
+
+                        vor[Ci] = ((R - L) - (B - T)) / 2;
+                    }
+                }
+            }
+
+            function applyVorticity(u, v, vor) {
+                for (let y = 1; y < canvas.height - 1; y++) {
+                    for (let x = 1; x < canvas.width - 1; x++) {
+                        const Ci = IX(x, y);
+                        const Li = IX(x - 1, y);
+                        const Ri = IX(x + 1, y);
+                        const Ti = IX(x, y - 1);
+                        const Bi = IX(x, y + 1);
+
+                        const L = Math.abs(vor[Li]);
+                        const R = Math.abs(vor[Ri]);
+                        const T = Math.abs(vor[Ti]);
+                        const B = Math.abs(vor[Bi]);
+
+                        let gradX = (R - L) / 2;
+                        let gradY = (B - T) / 2;
+                        const gradLength = Math.max(1e-4, Math.hypot(gradX, gradY));
+
+                        gradX /= gradLength;
+                        gradY /= gradLength;
+
+                        const force = settings.vorticity * vor[Ci];
+
+                        u[Ci] += settings.dt * force * gradY;
+                        v[Ci] -= settings.dt * force * gradX;
+                    }
+                }
+            }
+
+            function applyVelocityBC(u, v) {
+                for (let y = 0; y < canvas.height; y++) {
+                    const L0i = IX(0, y);
+                    const L1i = IX(1, y);
+                    const R0i = IX(canvas.width - 1, y);
+                    const R1i = IX(canvas.width - 2, y);
+
+                    u[L0i] = -u[L1i];
+                    u[R0i] = -u[R1i];
+                }
+
+                for (let x = 0; x < canvas.width; x++) {
+                    const T0i = IX(x, 0);
+                    const T1i = IX(x, 1);
+                    const B0i = IX(x, canvas.height - 1);
+                    const B1i = IX(x, canvas.height - 2);
+
+                    v[T0i] = -v[T1i];
+                    v[B0i] = -v[B1i];
+                }
+
+                // Top-left corner
+                const TL0i = IX(0, 0);
+                const TLRi = IX(1, 0);
+                const TLBi = IX(0, 1);
+
+                const uTLRi = u[TLRi];
+                const uTLBi = u[TLBi];
+                const vTLRi = v[TLRi];
+                const vTLBi = v[TLBi];
+
+                u[TL0i] = (uTLRi + uTLBi) / 2;
+                v[TL0i] = (vTLRi + vTLBi) / 2;
+
+                // Top-right corner
+                const TR0i = IX(canvas.width - 1, 0);
+                const TRLi = IX(canvas.width - 2, 0);
+                const TRBi = IX(canvas.width - 1, 1);
+
+                const uTRLi = u[TRLi];
+                const uTRBi = u[TRBi];
+                const vTRLi = v[TRLi];
+                const vTRBi = v[TRBi];
+
+                u[TR0i] = (uTRLi + uTRBi) / 2;
+                v[TR0i] = (vTRLi + vTRBi) / 2;
+
+                // Bottom-left corner
+                const BL0i = IX(0, canvas.height - 1);
+                const BLRi = IX(1, canvas.height - 1);
+                const BLTi = IX(0, canvas.height - 2);
+
+                const uBLRi = u[BLRi];
+                const uBLTi = u[BLTi];
+                const vBLRi = v[BLRi];
+                const vBLTi = v[BLTi];
+
+                u[BL0i] = (uBLRi + uBLTi) / 2;
+                v[BL0i] = (vBLRi + vBLTi) / 2;
+
+                // Bottom-right corner
+                const BR0i = IX(canvas.width - 1, canvas.height - 1);
+                const BRLi = IX(canvas.width - 2, canvas.height - 1);
+                const BRTi = IX(canvas.width - 1, canvas.height - 2);
+
+                const uBRLi = u[BRLi];
+                const uBRTi = u[BRTi];
+                const vBRLi = v[BRLi];
+                const vBRTi = v[BRTi];
+
+                u[BR0i] = (uBRLi + uBRTi) / 2;
+                v[BR0i] = (vBRLi + vBRTi) / 2;
+            }
+
+            function applyNeumannBC(q) {
+                for (let y = 0; y < canvas.height; y++) {
+                    const L0i = IX(0, y);
+                    const L1i = IX(1, y);
+                    const R0i = IX(canvas.width - 1, y);
+                    const R1i = IX(canvas.width - 2, y);
+
+                    q[L0i] = q[L1i];
+                    q[R0i] = q[R1i];
+                }
+
+                for (let x = 0; x < canvas.width; x++) {
+                    const T0i = IX(x, 0);
+                    const T1i = IX(x, 1);
+                    const B0i = IX(x, canvas.height - 1);
+                    const B1i = IX(x, canvas.height - 2);
+
+                    q[T0i] = q[T1i];
+                    q[B0i] = q[B1i];
+                }
+            }
+
+            function calculateGaussian2D(x, y, s) {
+                const x2 = x * x;
+                const y2 = y * y;
+                const s2 = s * s;
+                const dot = x2 + y2;
+                const norm = TWO_PI * s2;
+
+                return Math.exp(-dot / (2 * s2)) / norm;
+            }
+        </script>
+
+        <script>
+            function simulate() {
+                let temp;
+
+                // Diffuse velocity
+                for (let i = 0; i < settings.diffusionIterations; i++) {
+                    const al = settings.viscosity * settings.dt;
+                    const bt = 1 + 4 * al;
+
+                    poisson(u0, u1, u0, al, bt);
+                    poisson(v0, v1, v0, al, bt);
+
+                    temp = u0;
+                    u0 = u1;
+                    u1 = temp;
+
+                    temp = v0;
+                    v0 = v1;
+                    v1 = temp;
+
+                    applyVelocityBC(u0, v0); // Apply boundary conditions
+                }
+
+                // Advect velocity
+                advect(u0, v0, u0, u1);
+                advect(u0, v0, v0, v1);
+
+                temp = u0;
+                u0 = u1;
+                u1 = temp;
+
+                temp = v0;
+                v0 = v1;
+                v1 = temp;
+                
+                applyVelocityBC(u0, v0); // Apply boundary conditions
+
+                // START: Make fluid incompressible
+                calculateDivergence(u0, v0, div);
+                applyNeumannBC(div); // Apply boundary conditions
+
+                // START: Solve poisson-pressure equation
+                p0.fill(0); // Set initial guess to 0
+
+                for (let i = 0; i < settings.pressureIterations; i++) {
+                    poisson(p0, p1, div, -1, -4);
+
+                    temp = p0;
+                    p0 = p1;
+                    p1 = temp;
+
+                    applyNeumannBC(p0);
+                }
+                // END: Solve poisson-pressure equation
+
+                subtractPressure(u0, v0, p0);
+
+                applyVelocityBC(u0, v0); // Apply boundary conditions
+                // END: Make fluid incompressible
+
+                calculateVorticity(u0, v0, vor);
+                applyNeumannBC(vor); // Apply boundary conditions
+                applyVorticity(u0, v0, vor);
+                
+                applyVelocityBC(u0, v0); // Apply boundary conditions
+
+                // Advect dye through the fluid
+                advect(u0, v0, dye0, dye1);
+
+                temp = dye0;
+                dye0 = dye1;
+                dye1 = temp;
+
+                applyNeumannBC(dye0); // Apply boundary conditions
+
+                // Diffuse dye
+                // for (let i = 0; i < settings.diffustionIterations; i++) {
+                //     const al = settings.viscosity * settings.dt;
+                //     const bt = 1 + 4 * al;
+
+                //     poisson(dye0, dye1, dye0, al, bt);
+
+                //     temp = dye0;
+                //     dye0 = dye1;
+                //     dye1 = temp;
+                // }
+
+                // Clear the dye
+                for (let i = 0; i < dye0.length; i++) {
+                    dye0[i] *= settings.dyeFade;
+                }
+            }
+
+            function render(q) {
+                for (let y = 0; y < canvas.height; y++) {
+                    for (let x = 0; x < canvas.width; x++) {
+                        const i = IX(x, y);
+                        const pi = 4 * i;
+
+                        const r = q[i];
+                        const g = q[i];
+                        const b = q[i];
+
+                        imageData.data[pi + 0] = 255 * r;
+                        imageData.data[pi + 1] = 255 * g;
+                        imageData.data[pi + 2] = 255 * b;
+                        imageData.data[pi + 3] = 255;
+                    }
+                }
+
+                context.putImageData(imageData, 0, 0);
+            }
+
+            let rafID;
+
+            function loop() {
+                simulate();
+                render(q);
+
+                rafID = requestAnimationFrame(loop);
+            }
+
+            rafID = requestAnimationFrame(loop);
+        </script>
+    </body>
+</html>

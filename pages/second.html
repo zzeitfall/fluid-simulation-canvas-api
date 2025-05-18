@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0">
+        <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.css">
+        <link rel="stylesheet" type="text/css" href="../styles/reset.css">
+        <link rel="stylesheet" type="text/css" href="../styles/nav.css">
+        <link rel="stylesheet" type="text/css" href="../styles/canvas.css">
+        <title>Fluid Simulation #2</title>
+    </head>
+
+    <body>
+        <nav>
+            <a href="../index.html">Home</a>
+            <a href="first.html">Attempt #1</a>
+            <a href="second.html">Attempt #2</a>
+        </nav>
+
+        <canvas width="128" height="128"></canvas>
+
+        <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
+        <script src="https://mrdoob.github.io/stats.js/build/stats.min.js"></script>
+
+        <script>
+            // Simulation algorithm is mainly inspired by this article:
+            // https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf.
+            // 
+            // Potentially, somewhere in the code I'll refer to the formulas or whole sections,
+            // just in order to orientate and make debug easier.
+
+            //#region Initialization
+            const settings = {
+                canvasResolution: 4, // Temporary hardcoded value evaluated from dividing 512 by 128.
+                dt: 1,
+                dx: 1,
+                density: 1,
+                vorticity: .125,
+                pressureIterations: 40,
+                splatRadius: 12,
+                splatIntensity: .03125,
+                splatForce: .25,
+            };
+
+            const canvas = document.querySelector('canvas');
+            const canvasContext = canvas.getContext('2d', { alpha: false });
+            const canvasImageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+
+            // Computational area will be discretized using so-call MAC (staggered) grid.
+            // It is essential to make the horizontal velocity field (u) "wider" and the vertical one (v) "taller".
+            let u0 = createField(canvas.width + 1, canvas.height);
+            let u1 = createField(canvas.width + 1, canvas.height);
+            let v0 = createField(canvas.width, canvas.height + 1);
+            let v1 = createField(canvas.width, canvas.height + 1);
+            let div = createField(canvas.width, canvas.height);
+            let p0 = createField(canvas.width, canvas.height);
+            let p1 = createField(canvas.width, canvas.height);
+            let vor = createField(canvas.width, canvas.height);
+            let dye0 = createField(canvas.width, canvas.height);
+            let dye1 = createField(canvas.width, canvas.height);
+            
+            const gui = createGUI(settings, {
+                dt: {
+                    min: .1,
+                    max: 2,
+                    step: .1,
+                },
+                density: {
+                    min: .01,
+                    max: 2,
+                    step: .01,
+                },
+                vorticity: {
+                    min: 0,
+                    max: 1,
+                    step: .0625,
+                },
+                pressureIterations: {
+                    min: 5,
+                    max: 100,
+                    step: 5,
+                },
+                splatRadius: {
+                    min: 2,
+                    max: 32,
+                    step: 2,
+                },
+                splatIntensity: {
+                    min: .03125,
+                    max: .125,
+                    step: .03125,
+                },
+                splatForce: {
+                    min: .0625,
+                    max: 4,
+                    step: .0625,
+                },
+            });
+
+            const fpsMeter = createFPSMeter();
+
+            createPointerController(canvas, handlePointerMove);
+
+            requestAnimationFrame(loop);
+            //#endregion
+
+            //#region Services
+            function createArray2D(width, height) {
+                const size = width * height;
+
+                return new Float32Array(size);
+            }
+
+            function createSampler2D(array, stride) {
+
+                function getIndex(x, y) {
+                    return x + y * stride;
+                }
+
+                function get(x, y) {
+                    const index = getIndex(x, y);
+
+                    return array[index];
+                }
+
+                function set(x, y, value) {
+                    const index = getIndex(x, y);
+
+                    array[index] = value;
+                }
+
+                return {
+                    getIndex,
+                    get,
+                    set,
+                };
+            }
+
+            function createField(width, height) {
+                const array = createArray2D(width, height);
+                const sampler = createSampler2D(array, width);
+
+                return {
+                    width,
+                    height,
+                    array,
+                    ...sampler,
+                };
+            }
+
+            function createGUI(object, configurations) {
+                const instance = new dat.GUI();
+
+                Object.keys(object).forEach((key) => {
+                    const configuration = configurations[key];
+
+                    if (configuration) {
+                        const { min, max, step } = configuration;
+
+                        instance.add(object, key).min(min).max(max).step(step);
+                    }
+                });
+
+                return instance;
+            }
+
+            function createFPSMeter(parentElement = document.body) {
+                const instance = new Stats();
+
+                instance.showPanel(0);
+
+                parentElement.prepend(instance.dom);
+
+                return instance;
+            }
+
+            function createPointerController(target, moveCallback) {
+                let isPressed = false;
+
+                target.addEventListener('pointerdown', () => isPressed = true);
+                target.addEventListener('pointerup', () => isPressed = false);
+                target.addEventListener('pointermove', (event) => isPressed && moveCallback(event), { passive: true });
+            }
+            //#endregion
+
+            //#region Math utils
+            function clamp(value, min, max) {
+                return Math.max(min, Math.min(value, max));
+            }
+
+            function lerp(a, b, t) {
+                return (1 - t) * a + t * b;
+            }
+
+            function int(value) {
+                return value | 0;
+            }
+
+            function fract(value) {
+                return value % 1;
+            }
+
+            function hypot(a, b) {
+                return Math.sqrt(a * a + b * b);
+            }
+
+            function isInterior(x, y, padding = 1) {
+                return x >= padding
+                    && y >= padding
+                    && x <= canvas.width - padding - 1
+                    && y <= canvas.height - padding - 1;
+            }
+
+            function isExterior(x, y, padding = 1) {
+                return !isInterior(x, y, padding);
+            }
+            //#endregion
+
+            //#region Handlers
+            function handlePointerMove(event) {
+                const { canvasResolution, dt, splatRadius, splatIntensity, splatForce } = settings;
+                const { offsetX, offsetY, movementX, movementY } = event;
+
+                const pointerX = Math.floor(offsetX / canvasResolution);
+                const pointerY = Math.floor(offsetY / canvasResolution);
+                // Sometimes movementX and movementY can be zero which leads movementLength to be zero as well.
+                // Thus, movementLength could be limited to be at least some very small number.
+                // This will prevent indeterminate form of type 0/0, while evaluating normalized movement.
+                const movementLength = Math.max(1e-8, hypot(movementX, movementY));
+                const normalizedMovementX = movementX / movementLength;
+                const normalizedMovementY = movementY / movementLength;
+
+                for (let y = -splatRadius; y <= splatRadius; y++) {
+                    for (let x = -splatRadius; x <= splatRadius; x++) {
+                        const splatDistance = hypot(x, y);
+                        const splatX = x + pointerX;
+                        const splatY = y + pointerY;
+
+                        if (splatDistance > splatRadius || isExterior(splatX, splatY)) {
+                            continue;
+                        }
+
+                        const splatFade = dt * (1 - splatDistance / splatRadius);
+
+                        const previousU = u0.get(splatX, splatY);
+                        const previousV = v0.get(splatX, splatY);
+                        const previousDye = dye0.get(splatX, splatY);
+
+                        const newU = previousU + splatForce * splatFade * normalizedMovementX;
+                        const newV = previousV + splatForce * splatFade * normalizedMovementY;
+                        const newDye = previousDye + splatIntensity * splatFade * movementLength;
+
+                        u0.set(splatX, splatY, newU);
+                        v0.set(splatX, splatY, newV);
+                        dye0.set(splatX, splatY, newDye);
+                    }
+                }
+            }
+            //#endregion
+
+            //#region Boundaries [chapter 1, section 1.6]
+            function applyNoSlipBC(u, v) {
+                const uWidth = u.width;
+                const uHeight = u.height;
+                const vWidth = v.width;
+                const vHeight = v.height;
+
+                for (let y = 0; y < uHeight; y++) {
+                    const uL = u.get(1, y);
+                    const uR = u.get(uWidth - 2, y);
+
+                    u.set(1, y, -uL);
+                    u.set(uWidth - 2, y, -uR);
+                }
+
+                for (let x = 0; x < vWidth; x++) {
+                    const vT = v.get(x, 1);
+                    const vB = v.get(x, vHeight - 2);
+
+                    v.set(x, 1, -vT);
+                    v.set(x, vHeight - 2, -vB);
+                }
+            }
+
+            function applyNeumannBC(q) {
+                const width = q.width;
+                const height = q.height;
+
+                for (let y = 0; y < height; y++) {
+                    const qL = q.get(1, y);
+                    const qR = q.get(width - 2, y);
+
+                    q.set(0, y, qL);
+                    q.set(width - 1, y, qR);
+                }
+
+                for (let x = 0; x < width; x++) {
+                    const qT = q.get(x, 1);
+                    const qB = q.get(x, height - 2);
+
+                    q.set(x, 0, qT);
+                    q.set(x, height - 1, qB);
+                }
+            }
+            //#endregion
+
+            //#region Advection [chapter 3, section 3.0]
+            function advect(u, v, q0, q1) {
+                const width = q0.width;
+                const height = q0.height;
+
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const uL = u.get(x, y);     // u(i - 1/2, j)
+                        const uR = u.get(x + 1, y); // u(i + 1/2, j)
+                        const vT = v.get(x, y);     // v(i, j - 1/2)
+                        const vB = v.get(x, y + 1); // v(i, j + 1/2)
+
+                        // Central differences approximation
+                        const uAvg = (uL + uR) / 2; // (2.22)
+                        const vAvg = (vT + vB) / 2; // (2.22)
+
+                        const tracedU = x - settings.dt * uAvg;
+                        const tracedV = y - settings.dt * vAvg;
+                        const intU = int(tracedU); // Left face
+                        const intV = int(tracedV); // Top face
+                        const fractU = fract(tracedU);
+                        const fractV = fract(tracedV);
+
+                        const qTL = q0.get(intU, intV);
+                        const qTR = q0.get(intU + 1, intV);
+                        const qBL = q0.get(intU, intV + 1);
+                        const qBR = q0.get(intU + 1, intV + 1);
+
+                        const qTI = lerp(qTL, qTR, fractU);
+                        const qBI = lerp(qBL, qBR, fractU);
+
+                        q1.set(x, y, lerp(qTI, qBI, fractV));
+                    }
+                }
+            }
+            //#endregion
+
+            //#region Incompressibility [chapter 4, sections 4.1 - 4.3]
+            function calculateDivergence(u, v, div) {
+                const width = div.width;
+                const height = div.height;
+
+                const divNormalizer = 1 / settings.dx;
+
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const uL = u.get(x, y);     // u(i - 1/2, j)
+                        const uR = u.get(x + 1, y); // u(i + 1/2, j)
+                        const vT = v.get(x, y);     // v(i, j - 1/2)
+                        const vB = v.get(x, y + 1); // v(i, j + 1/2)
+
+                        div.set(x, y, (uR - uL + vB - vT) * divNormalizer); // (4.13)
+                    }
+                }
+            }
+
+            function calculatePressure(div, p0, p1) {
+                const width = p0.width;
+                const height = p0.height;
+
+                const { dt, dx, density } = settings;
+
+                const divNormalizer = dx * dx * density / dt;
+
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const divC = div.get(x, y);
+
+                        const pL = p0.get(x - 1, y);
+                        const pR = p0.get(x + 1, y);
+                        const pT = p0.get(x, y - 1);
+                        const pB = p0.get(x, y + 1);
+
+                        p1.set(x, y, (pL + pR + pT + pB - divC * divNormalizer) / 4); // (4.19)
+                    }
+                }
+            }
+
+            function subtractPressure(u, v, p) {
+                const uWidth = u.width;
+                const uHeight = u.height;
+                const vWidth = v.width;
+                const vHeight = v.height;
+
+                const { dt, dx, density } = settings;
+
+                const pNormalizer = dt / (dx * density);
+
+                for (let y = 1; y < uHeight - 1; y++) {
+                    for (let x = 1; x < uWidth - 1; x++) {
+                        const pL = p.get(x - 1, y);
+                        const pR = p.get(x, y);
+
+                        const u0 = u.get(x, y);
+                        const u1 = u0 - (pR - pL) * pNormalizer; // (4.4)
+
+                        u.set(x, y, u1);
+                    }
+                }
+
+                for (let y = 1; y < vHeight - 1; y++) {
+                    for (let x = 1; x < vWidth - 1; x++) {
+                        const pT = p.get(x, y - 1);
+                        const pB = p.get(x, y);
+
+                        const v0 = v.get(x, y);
+                        const v1 = v0 - (pB - pT) * pNormalizer; // (4.4)
+
+                        v.set(x, y, v1);
+                    }
+                }
+            }
+            //#endregion
+
+            //#region Vorticity [chapter 5, section 5.1]
+            function calculateVortices(u, v, vor) {
+                const width = vor.width;
+                const height = vor.height;
+
+                const vorNormalizer = 1 / (2 * settings.dx);
+
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const vL = v.get(x, y);     // v(i - 1/2, j)
+                        const vR = v.get(x + 1, y); // v(i + 1/2, j)
+                        const uT = u.get(x, y);     // u(i, j - 1/2)
+                        const uB = u.get(x, y + 1); // u(i, j + 1/2)
+
+                        vor.set(x, y, ((vR - vL) - (uB - uT)) * vorNormalizer); // (5.3) or 2D version of (5.6) -> A.1.3
+                    }
+                }
+            }
+
+            function applyVorticity(u, v, vor) {
+                const width = vor.width;
+                const height = vor.height;
+
+                const { dx, vorticity } = settings;
+
+                const gradNormalizer = 1 / (2 * dx);
+
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const vorC = vor.get(x, y);
+                        const vorL = Math.abs(vor.get(x - 1, y));
+                        const vorR = Math.abs(vor.get(x + 1, y));
+                        const vorT = Math.abs(vor.get(x, y - 1));
+                        const vorB = Math.abs(vor.get(x, y + 1));
+
+                        let gradVorX = (vorR - vorL) * gradNormalizer; // 2D version of (5.7)
+                        let gradVorY = (vorB - vorT) * gradNormalizer; // 2D version of (5.7)
+                        const gradVorLength = Math.max(1e-8, hypot(gradVorX, gradVorY));
+
+                        gradVorX /= gradVorLength; // (5.4)
+                        gradVorY /= gradVorLength; // (5.4)
+
+                        const vorForce = dx * vorticity * vorC; // (5.5)
+
+                        const u0 = u.get(x, y);
+                        const v0 = v.get(x, y);
+                        const u1 = u0 + gradVorY * vorForce;
+                        const v1 = v0 - gradVorX * vorForce;
+
+                        u.set(x, y, u1);
+                        v.set(x, y, v1);
+                    }
+                }
+            }
+            //#endregion
+
+            //#region Color functions
+            function getGreyscaleColor(value) {
+                const v = 255 * clamp(value, 0, 1);
+
+                return [v, v, v];
+            }
+
+            // https://www.mathworks.com/help/matlab/ref/jet.html
+            function getJetColor(value) {
+                const v = clamp(value, 0, 1);
+                const r = 255 * clamp(1.5 - Math.abs(4 * v - 3), 0, 1);
+                const g = 255 * clamp(1.5 - Math.abs(4 * v - 2), 0, 1);
+                const b = 255 * clamp(1.5 - Math.abs(4 * v - 1), 0, 1);
+
+                return [r, g, b];
+            }
+            //#endregion
+
+            //#region Loop
+            function simulate() {
+                let temp;
+
+                advect(u0, v0, u0, u1);
+                advect(u0, v0, v0, v1);
+
+                temp = u0;
+                u0 = u1;
+                u1 = temp;
+
+                temp = v0;
+                v0 = v1;
+                v1 = temp;
+
+                applyNoSlipBC(u0, v0);
+
+                calculateDivergence(u0, v0, div);
+
+                p0.array.fill(0);
+
+                for (let i = 0; i < settings.pressureIterations; i++) {
+                    calculatePressure(div, p0, p1);
+
+                    temp = p0;
+                    p0 = p1;
+                    p1 = temp;
+                }
+
+                applyNeumannBC(p0);
+
+                subtractPressure(u0, v0, p0);
+
+                applyNoSlipBC(u0, v0);
+
+                calculateVortices(u0, v0, vor);
+                applyVorticity(u0, v0, vor);
+
+                advect(u0, v0, dye0, dye1);
+
+                temp = dye0;
+                dye0 = dye1;
+                dye1 = temp;
+
+                for (let i = 0; i < dye0.array.length; i++) {
+                    dye0.array[i] *= .995;
+                }
+            }
+        
+            function render(q) {
+                const width = canvas.width;
+                const height = canvas.height;
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const i = 4 * (x + y * width);
+
+                        const [r, g, b] = getJetColor(q.get(x, y));
+
+                        canvasImageData.data[i + 0] = r;
+                        canvasImageData.data[i + 1] = g;
+                        canvasImageData.data[i + 2] = b;
+                        canvasImageData.data[i + 3] = 255;
+                    }
+                }
+
+                canvasContext.putImageData(canvasImageData, 0, 0);
+            }
+
+            function loop() {
+                fpsMeter.begin();
+
+                simulate();
+                render(dye0);
+
+                fpsMeter.end();
+
+                requestAnimationFrame(loop);
+            }
+            //#endregion
+        </script>
+    </body>
+</html>

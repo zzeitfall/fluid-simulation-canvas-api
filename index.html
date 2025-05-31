@@ -4,13 +4,12 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0">
         <link rel="stylesheet" type="text/css" href="styles/reset.css">
-        <link rel="stylesheet" type="text/css" href="styles/nav.css">
         <style>
             article {
                 display: flex;
                 flex-direction: column;
                 gap: 1rem;
-                width: min(32rem, 100%);
+                width: min(48rem, 100%);
                 margin-inline: auto;
                 padding: 1rem;
             }
@@ -23,47 +22,30 @@
                 margin-bottom: .5rem;
             }
 
+            article section :is(ul, ol) {
+                list-style-position: inside;
+            }
+
             article section ul {
                 display: flex;
                 flex-direction: column;
                 gap: .5rem;
-                list-style: none;
             }
 
-            article section ul li {
-                position: relative;
+            article section ul li::marker {
                 padding-left: 1rem;
-                line-height: 1.5;
-            }
-
-            article section ul li::before {
-                content: '';
-                position: absolute;
-                top: calc(1.5 * .5rem);
-                left: .5rem;
-                transform: translate(-50%, -50%);
-                width: .25rem;
-                height: .25rem;
-                border-radius: 50%;
-                background-color: black;
             }
         </style>
     </head>
 
     <body>
-        <nav>
-            <a href="/">Home</a>
-            <a href="pages/first.html">Attempt #1</a>
-            <a href="pages/second.html">Attempt #2</a>
-        </nav>
-
         <article>
             <h1>Fluid Simulation Journey</h1>
 
             <section>
                 <h2>What is it?</h2>
                 <p>
-                    This is a personal project created for exploritary and learning purposes.
+                    This is a <a href="https://github.com/zzeitfall/fluid-simulation-canvas-api" target="_blank">personal project</a> created for exploritary and learning purposes.
                     The field of interest is fluid dynamics based on Navier-Stokes equations for incompressible flow.
                     The goal is to understand the numerical methods behind the fluid simulation solver and implement them.
                 </p>
@@ -74,26 +56,38 @@
                 <ul>
                     <li>
                         <a href="pages/first.html">Attempt #1</a>.
-                        Basic implementation of fluid simulation solver.
+                        This was my first attempt at diving deep into fluid simulation based on Navier-Stokes equations. I had a really tough time with all this math involved for the simulation, as well as translating it to the functional code. This solver uses a simple collocated grid to represent vector and scalar quantities. Also, it uses simple Jacobi method to solve the Poisson equation for pressure. I am sure this solver has numerous inaccuracies and simplifications, primarily due to the gaps in my math. Anyways, this attempt was an essential step toward understanding fluid dynamics and translating theoretical concepts into functional code. The implementation primarily drew inspiration from <a href="#gpu-gems">GPU Gems by Nvidia</a> and <a href="#stam-fluid">Real-Time Fluid Dynamics for Games by J. Stam</a>
                     </li>
                     <li>
-                        <a href="pages/first.html">Attempt #2</a>.
-                        Improved variant of the first solver. This one based on MAC (staggered) grids.
+                        <a href="pages/second.html">Attempt #2</a>.
+                        My second attempt was focused on achieving greater accuracy and refinement. With a better understanding of the underlying math, I switched to a staggered (MAC) grid for vector quantities such as the velocity field. This solver uses the Red-Black Gauss-Seidel (RBGS) method to solve the Poisson equation for pressure. Also, I intentionally dropped the viscosity term (i.e. the diffusion step), as I believe it doesn't add significant value to the simulation. These improvements result in faster convergence and better simulation performance (1.5-2x). That said, one thing I still haven't figured out is how to properly implement boundary conditions to make the smoke reflect off the walls. Hopefully, I'll get this in the future and finish the solver! It worth to mention <a href="#fluid-notes">Fluid Notes by Robert Bridson</a> article, which helpped me a lot - I highly recommend it.
                     </li>
                 </ul>
             </section>
 
             <section>
-                <h2>Useful links</h2>
+                <h2>Useful Links</h2>
+                <ol>
+                    <li>
+                        <a id="fluid-notes" href="https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf" target="_blank">Fluid Notes by R. Bridson</a>
+                    </li>
+                    <li>
+                        <a id="gpu-gems" href="https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu">GPU Gems by NVidia</a>
+                    </li>
+                    <li>
+                        <a id="stam-fluid" href="https://graphics.cs.cmu.edu/nsp/course/15-464/Spring11/papers/StamFluidforGames.pdf">Real-Time Fluid Dynamics for Games by J. Stam</a>
+                    </li>
+                </ol>
+            </section>
+
+            <section>
+                <h2>Contact Me</h2>
                 <ul>
                     <li>
-                        <a href="https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf" target="_blank">Fluid Notes by R. Bridson</a>
+                        <a href="https://github.com/zzeitfall" target="_blank">Github (@zzeitfall)</a>
                     </li>
                     <li>
-                        <a href="https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu">GPU Gems by NVidia</a>
-                    </li>
-                    <li>
-                        <a href="https://graphics.cs.cmu.edu/nsp/course/15-464/Spring11/papers/StamFluidforGames.pdf">Real-Time Fluid Dynamics for Games by J. Stam</a>
+                        <a href="mailto:zzeitfall@gmail.com" target="_blank">Mail (zzeitfall@gmail.com)</a>
                     </li>
                 </ul>
             </section>

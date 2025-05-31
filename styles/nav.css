@@ -1,11 +1,10 @@
 nav {
     display: flex;
-    gap: 1rem;
+    gap: 1.5rem;
     height: 3rem;
     margin-block: 1rem;
     padding-inline: 1rem;
     margin-inline: auto;
-    background-color: rgba(0, 0, 0, .1);
 }
 
 nav a {

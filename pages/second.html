@@ -32,14 +32,14 @@
             //#region Initialization
             const settings = {
                 canvasResolution: 4, // Temporary hardcoded value evaluated from dividing 512 by 128.
-                dt: 1,
+                dt: .5,
                 dx: 1,
-                density: 1,
+                density: .5,
                 vorticity: .125,
-                pressureIterations: 40,
+                pressureIterations: 20,
                 splatRadius: 12,
-                splatIntensity: .03125,
                 splatForce: .25,
+                dyeIntensity: .03125,
             };
 
             const canvas = document.querySelector('canvas');
@@ -53,8 +53,7 @@
             let v0 = createField(canvas.width, canvas.height + 1);
             let v1 = createField(canvas.width, canvas.height + 1);
             let div = createField(canvas.width, canvas.height);
-            let p0 = createField(canvas.width, canvas.height);
-            let p1 = createField(canvas.width, canvas.height);
+            let p = createField(canvas.width, canvas.height);
             let vor = createField(canvas.width, canvas.height);
             let dye0 = createField(canvas.width, canvas.height);
             let dye1 = createField(canvas.width, canvas.height);
@@ -67,12 +66,12 @@
                 },
                 density: {
                     min: .01,
-                    max: 2,
+                    max: 1,
                     step: .01,
                 },
                 vorticity: {
                     min: 0,
-                    max: 1,
+                    max: .5,
                     step: .0625,
                 },
                 pressureIterations: {
@@ -85,15 +84,15 @@
                     max: 32,
                     step: 2,
                 },
-                splatIntensity: {
-                    min: .03125,
-                    max: .125,
-                    step: .03125,
-                },
                 splatForce: {
                     min: .0625,
                     max: 4,
                     step: .0625,
+                },
+                dyeIntensity: {
+                    min: .03125,
+                    max: .125,
+                    step: .001,
                 },
             });
 
@@ -101,7 +100,7 @@
 
             createPointerController(canvas, handlePointerMove);
 
-            requestAnimationFrame(loop);
+            createRAFLoop(loop);
             //#endregion
 
             //#region Services
@@ -146,6 +145,16 @@
                     array,
                     ...sampler,
                 };
+            }
+
+            function createRAFLoop(callback) {
+                function _loop() {
+                    callback();
+
+                    requestAnimationFrame(_loop);
+                }
+
+                requestAnimationFrame(_loop);
             }
 
             function createGUI(object, configurations) {
@@ -218,7 +227,7 @@
 
             //#region Handlers
             function handlePointerMove(event) {
-                const { canvasResolution, dt, splatRadius, splatIntensity, splatForce } = settings;
+                const { canvasResolution, dt, splatRadius, dyeIntensity, splatForce } = settings;
                 const { offsetX, offsetY, movementX, movementY } = event;
 
                 const pointerX = Math.floor(offsetX / canvasResolution);
@@ -240,7 +249,7 @@
                             continue;
                         }
 
-                        const splatFade = dt * (1 - splatDistance / splatRadius);
+                        const splatFade = 1 - splatDistance / splatRadius;
 
                         const previousU = u0.get(splatX, splatY);
                         const previousV = v0.get(splatX, splatY);
@@ -248,7 +257,7 @@
 
                         const newU = previousU + splatForce * splatFade * normalizedMovementX;
                         const newV = previousV + splatForce * splatFade * normalizedMovementY;
-                        const newDye = previousDye + splatIntensity * splatFade * movementLength;
+                        const newDye = previousDye + dyeIntensity * splatFade * movementLength;
 
                         u0.set(splatX, splatY, newU);
                         v0.set(splatX, splatY, newV);
@@ -266,40 +275,13 @@
                 const vHeight = v.height;
 
                 for (let y = 0; y < uHeight; y++) {
-                    const uL = u.get(1, y);
-                    const uR = u.get(uWidth - 2, y);
-
-                    u.set(1, y, -uL);
-                    u.set(uWidth - 2, y, -uR);
+                    u.set(0, y, 0);
+                    u.set(uWidth - 1, y, 0);
                 }
 
                 for (let x = 0; x < vWidth; x++) {
-                    const vT = v.get(x, 1);
-                    const vB = v.get(x, vHeight - 2);
-
-                    v.set(x, 1, -vT);
-                    v.set(x, vHeight - 2, -vB);
-                }
-            }
-
-            function applyNeumannBC(q) {
-                const width = q.width;
-                const height = q.height;
-
-                for (let y = 0; y < height; y++) {
-                    const qL = q.get(1, y);
-                    const qR = q.get(width - 2, y);
-
-                    q.set(0, y, qL);
-                    q.set(width - 1, y, qR);
-                }
-
-                for (let x = 0; x < width; x++) {
-                    const qT = q.get(x, 1);
-                    const qB = q.get(x, height - 2);
-
-                    q.set(x, 0, qT);
-                    q.set(x, height - 1, qB);
+                    v.set(x, 0, 0);
+                    v.set(x, vHeight - 1, 0);
                 }
             }
             //#endregion
@@ -320,8 +302,8 @@
                         const uAvg = (uL + uR) / 2; // (2.22)
                         const vAvg = (vT + vB) / 2; // (2.22)
 
-                        const tracedU = x - settings.dt * uAvg;
-                        const tracedV = y - settings.dt * vAvg;
+                        const tracedU = clamp(x - settings.dt * uAvg, 0, width);
+                        const tracedV = clamp(y - settings.dt * vAvg, 0, height);
                         const intU = int(tracedU); // Left face
                         const intV = int(tracedV); // Top face
                         const fractU = fract(tracedU);
@@ -360,9 +342,10 @@
                 }
             }
 
-            function calculatePressure(div, p0, p1) {
-                const width = p0.width;
-                const height = p0.height;
+            // Red-Black Gauss-Seidel method
+            function calculatePressure(div, p, order) {
+                const width = p.width;
+                const height = p.height;
 
                 const { dt, dx, density } = settings;
 
@@ -370,14 +353,18 @@
 
                 for (let y = 1; y < height - 1; y++) {
                     for (let x = 1; x < width - 1; x++) {
-                        const divC = div.get(x, y);
+                        const xy = x + y;
 
-                        const pL = p0.get(x - 1, y);
-                        const pR = p0.get(x + 1, y);
-                        const pT = p0.get(x, y - 1);
-                        const pB = p0.get(x, y + 1);
+                        if (xy % 2 === order) {
+                            const divC = div.get(x, y);
 
-                        p1.set(x, y, (pL + pR + pT + pB - divC * divNormalizer) / 4); // (4.19)
+                            const pL = p.get(x - 1, y);
+                            const pR = p.get(x + 1, y);
+                            const pT = p.get(x, y - 1);
+                            const pB = p.get(x, y + 1);
+
+                            p.set(x, y, (pL + pR + pT + pB - divC * divNormalizer) / 4); // (4.19)
+                        }
                     }
                 }
             }
@@ -393,26 +380,26 @@
                 const pNormalizer = dt / (dx * density);
 
                 for (let y = 1; y < uHeight - 1; y++) {
-                    for (let x = 1; x < uWidth - 1; x++) {
-                        const pL = p.get(x - 1, y);
-                        const pR = p.get(x, y);
+                    for (let x = 0; x < uWidth - 2; x++) {
+                        const pL = p.get(x, y);
+                        const pR = p.get(x + 1, y);
 
-                        const u0 = u.get(x, y);
+                        const u0 = u.get(x + 1, y);
                         const u1 = u0 - (pR - pL) * pNormalizer; // (4.4)
 
-                        u.set(x, y, u1);
+                        u.set(x + 1, y, u1);
                     }
                 }
 
-                for (let y = 1; y < vHeight - 1; y++) {
+                for (let y = 0; y < vHeight - 2; y++) {
                     for (let x = 1; x < vWidth - 1; x++) {
-                        const pT = p.get(x, y - 1);
-                        const pB = p.get(x, y);
+                        const pT = p.get(x, y);
+                        const pB = p.get(x, y + 1);
 
-                        const v0 = v.get(x, y);
+                        const v0 = v.get(x, y + 1);
                         const v1 = v0 - (pB - pT) * pNormalizer; // (4.4)
 
-                        v.set(x, y, v1);
+                        v.set(x, y + 1, v1);
                     }
                 }
             }
@@ -475,14 +462,14 @@
             //#endregion
 
             //#region Color functions
-            function getGreyscaleColor(value) {
+            function greyScaleColor(value) {
                 const v = 255 * clamp(value, 0, 1);
 
                 return [v, v, v];
             }
 
             // https://www.mathworks.com/help/matlab/ref/jet.html
-            function getJetColor(value) {
+            function jetColor(value) {
                 const v = clamp(value, 0, 1);
                 const r = 255 * clamp(1.5 - Math.abs(4 * v - 3), 0, 1);
                 const g = 255 * clamp(1.5 - Math.abs(4 * v - 2), 0, 1);
@@ -511,19 +498,14 @@
 
                 calculateDivergence(u0, v0, div);
 
-                p0.array.fill(0);
+                p.array.fill(0);
 
                 for (let i = 0; i < settings.pressureIterations; i++) {
-                    calculatePressure(div, p0, p1);
-
-                    temp = p0;
-                    p0 = p1;
-                    p1 = temp;
+                    calculatePressure(div, p, 0); // Calculate "red" cells based on "black"
+                    calculatePressure(div, p, 1); // Calculate "black" cells based on "red"
                 }
 
-                applyNeumannBC(p0);
-
-                subtractPressure(u0, v0, p0);
+                subtractPressure(u0, v0, p);
 
                 applyNoSlipBC(u0, v0);
 
@@ -549,7 +531,7 @@
                     for (let x = 0; x < width; x++) {
                         const i = 4 * (x + y * width);
 
-                        const [r, g, b] = getJetColor(q.get(x, y));
+                        const [r, g, b] = jetColor(q.get(x, y));
 
                         canvasImageData.data[i + 0] = r;
                         canvasImageData.data[i + 1] = g;
@@ -568,8 +550,6 @@
                 render(dye0);
 
                 fpsMeter.end();
-
-                requestAnimationFrame(loop);
             }
             //#endregion
         </script>

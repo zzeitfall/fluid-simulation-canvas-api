@@ -36,7 +36,8 @@
                 dx: 1,
                 density: .5,
                 vorticity: .125,
-                pressureIterations: 20,
+                overrelaxation: 1.25,
+                projectionIterations: 20,
                 splatRadius: 12,
                 splatForce: .25,
                 dyeIntensity: .03125,
@@ -52,7 +53,7 @@
             let u1 = createField(canvas.width + 1, canvas.height);
             let v0 = createField(canvas.width, canvas.height + 1);
             let v1 = createField(canvas.width, canvas.height + 1);
-            let div = createField(canvas.width, canvas.height);
+            // let div = createField(canvas.width, canvas.height);
             let p = createField(canvas.width, canvas.height);
             let vor = createField(canvas.width, canvas.height);
             let dye0 = createField(canvas.width, canvas.height);
@@ -74,7 +75,12 @@
                     max: .5,
                     step: .0625,
                 },
-                pressureIterations: {
+                overrelaxation: {
+                    min: 1.01,
+                    max: 1.99,
+                    step: .01,
+                },
+                projectionIterations: {
                     min: 5,
                     max: 100,
                     step: 5,
@@ -324,82 +330,121 @@
             //#endregion
 
             //#region Incompressibility [chapter 4, sections 4.1 - 4.3]
-            function calculateDivergence(u, v, div) {
-                const width = div.width;
-                const height = div.height;
+            // function calculateDivergence(u, v, div) {
+            //     const width = div.width;
+            //     const height = div.height;
 
-                const divNormalizer = 1 / settings.dx;
+            //     const divNormalizer = 1 / settings.dx;
 
-                for (let y = 1; y < height - 1; y++) {
-                    for (let x = 1; x < width - 1; x++) {
-                        const uL = u.get(x, y);     // u(i - 1/2, j)
-                        const uR = u.get(x + 1, y); // u(i + 1/2, j)
-                        const vT = v.get(x, y);     // v(i, j - 1/2)
-                        const vB = v.get(x, y + 1); // v(i, j + 1/2)
+            //     for (let y = 1; y < height - 1; y++) {
+            //         for (let x = 1; x < width - 1; x++) {
+            //             const uL = u.get(x, y);     // u(i - 1/2, j)
+            //             const uR = u.get(x + 1, y); // u(i + 1/2, j)
+            //             const vT = v.get(x, y);     // v(i, j - 1/2)
+            //             const vB = v.get(x, y + 1); // v(i, j + 1/2)
 
-                        div.set(x, y, (uR - uL + vB - vT) * divNormalizer); // (4.13)
-                    }
-                }
-            }
+            //             div.set(x, y, (uR - uL + vB - vT) * divNormalizer); // (4.13)
+            //         }
+            //     }
+            // }
 
             // Red-Black Gauss-Seidel method
-            function calculatePressure(div, p, order) {
+            // function calculatePressure(div, p, order) {
+            //     const width = p.width;
+            //     const height = p.height;
+
+            //     const { dt, dx, density } = settings;
+
+            //     const divNormalizer = dx * dx * density / dt;
+
+            //     for (let y = 1; y < height - 1; y++) {
+            //         for (let x = 1; x < width - 1; x++) {
+            //             const xy = x + y;
+
+            //             if (xy % 2 === order) {
+            //                 const divC = div.get(x, y);
+
+            //                 const pL = p.get(x - 1, y);
+            //                 const pR = p.get(x + 1, y);
+            //                 const pT = p.get(x, y - 1);
+            //                 const pB = p.get(x, y + 1);
+
+            //                 p.set(x, y, (pL + pR + pT + pB - divC * divNormalizer) / 4); // (4.19)
+            //             }
+            //         }
+            //     }
+            // }
+
+            // function subtractPressure(u, v, p) {
+            //     const uWidth = u.width;
+            //     const uHeight = u.height;
+            //     const vWidth = v.width;
+            //     const vHeight = v.height;
+
+            //     const { dt, dx, density } = settings;
+
+            //     const pNormalizer = dt / (dx * density);
+
+            //     for (let y = 1; y < uHeight - 1; y++) {
+            //         for (let x = 0; x < uWidth - 2; x++) {
+            //             const pL = p.get(x, y);
+            //             const pR = p.get(x + 1, y);
+
+            //             const u0 = u.get(x + 1, y);
+            //             const u1 = u0 - (pR - pL) * pNormalizer; // (4.4)
+
+            //             u.set(x + 1, y, u1);
+            //         }
+            //     }
+
+            //     for (let y = 0; y < vHeight - 2; y++) {
+            //         for (let x = 1; x < vWidth - 1; x++) {
+            //             const pT = p.get(x, y);
+            //             const pB = p.get(x, y + 1);
+
+            //             const v0 = v.get(x, y + 1);
+            //             const v1 = v0 - (pB - pT) * pNormalizer; // (4.4)
+
+            //             v.set(x, y + 1, v1);
+            //         }
+            //     }
+            // }
+
+            // Gauss-Seidel method, calculating pressure is optional here.
+            function project(u, v, p) {
                 const width = p.width;
                 const height = p.height;
 
-                const { dt, dx, density } = settings;
+                const { dt, dx, density, overrelaxation } = settings;
 
-                const divNormalizer = dx * dx * density / dt;
+                const s = 4;                                // Faces
+                const divNormalizer = overrelaxation / dx;  // Normalizer for calculating divergence
+                const pNormalizer = dx * dx * density / dt; // Normalizer for divergence when calculating pressure
 
                 for (let y = 1; y < height - 1; y++) {
                     for (let x = 1; x < width - 1; x++) {
-                        const xy = x + y;
+                        const uL0 = u.get(x, y);     // u(i - 1/2, j)
+                        const uR0 = u.get(x + 1, y); // u(i + 1/2, j)
+                        const vT0 = v.get(x, y);     // v(i, j - 1/2)
+                        const vB0 = v.get(x, y + 1); // v(i, j + 1/2)
 
-                        if (xy % 2 === order) {
-                            const divC = div.get(x, y);
+                        // Calculate divergence
+                        const div = (uR0 - uL0 + vB0 - vT0) * divNormalizer;
 
-                            const pL = p.get(x - 1, y);
-                            const pR = p.get(x + 1, y);
-                            const pT = p.get(x, y - 1);
-                            const pB = p.get(x, y + 1);
+                        var uL1 = uL0 + div / s;
+                        var uR1 = uR0 - div / s;
+                        var vT1 = vT0 + div / s;
+                        var vB1 = vB0 - div / s;
 
-                            p.set(x, y, (pL + pR + pT + pB - divC * divNormalizer) / 4); // (4.19)
-                        }
-                    }
-                }
-            }
+                        u.set(x, y, uL1);
+                        u.set(x + 1, y, uR1);
+                        v.set(x, y, vT1);
+                        v.set(x, y + 1, vB1);
 
-            function subtractPressure(u, v, p) {
-                const uWidth = u.width;
-                const uHeight = u.height;
-                const vWidth = v.width;
-                const vHeight = v.height;
+                        var p0 = p.get(x, y);
+                        var p1 = p0 - div * pNormalizer / s;
 
-                const { dt, dx, density } = settings;
-
-                const pNormalizer = dt / (dx * density);
-
-                for (let y = 1; y < uHeight - 1; y++) {
-                    for (let x = 0; x < uWidth - 2; x++) {
-                        const pL = p.get(x, y);
-                        const pR = p.get(x + 1, y);
-
-                        const u0 = u.get(x + 1, y);
-                        const u1 = u0 - (pR - pL) * pNormalizer; // (4.4)
-
-                        u.set(x + 1, y, u1);
-                    }
-                }
-
-                for (let y = 0; y < vHeight - 2; y++) {
-                    for (let x = 1; x < vWidth - 1; x++) {
-                        const pT = p.get(x, y);
-                        const pB = p.get(x, y + 1);
-
-                        const v0 = v.get(x, y + 1);
-                        const v1 = v0 - (pB - pT) * pNormalizer; // (4.4)
-
-                        v.set(x, y + 1, v1);
+                        p.set(x, y, p1);
                     }
                 }
             }
@@ -496,16 +541,25 @@
 
                 applyNoSlipBC(u0, v0);
 
-                calculateDivergence(u0, v0, div);
+                //#region Old projection step
+                // calculateDivergence(u0, v0, div);
 
+                // p.array.fill(0);
+
+                // for (let i = 0; i < settings.pressureIterations; i++) {
+                //     calculatePressure(div, p, 0); // Calculate "red" cells based on "black"
+                //     calculatePressure(div, p, 1); // Calculate "black" cells based on "red"
+                // }
+
+                // subtractPressure(u0, v0, p);
+
+                //#region New projection step
                 p.array.fill(0);
 
-                for (let i = 0; i < settings.pressureIterations; i++) {
-                    calculatePressure(div, p, 0); // Calculate "red" cells based on "black"
-                    calculatePressure(div, p, 1); // Calculate "black" cells based on "red"
+                for (let i = 0; i < settings.projectionIterations; i++) {
+                    project(u0, v0, p);
                 }
-
-                subtractPressure(u0, v0, p);
+                //#endregion 
 
                 applyNoSlipBC(u0, v0);
 
